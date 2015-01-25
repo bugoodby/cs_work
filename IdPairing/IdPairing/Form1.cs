@@ -24,19 +24,31 @@ namespace IdPairing
             public Settings() { }
         }
 
+        // シナリオ情報
+        public class ScenarioInfo
+        {
+            public string id;
+            public string targetPath;
+            public string expectPath;
+
+            public ScenarioInfo() { }
+        }
+
         Settings settings_ = new Settings();
+        Dictionary<string, ScenarioInfo> scenarioInfoDict_ = new Dictionary<string, ScenarioInfo>();
         Dictionary<string, string> modelExpectList_ = new Dictionary<string, string>();
         Dictionary<string, string> commonExpectList_ = new Dictionary<string, string>();
 
         //----------------------------------------------------------------------
 
+        // 実行ファイルのフォルダパスを返す
         private string GetModuleDir()
         {
-            // 実行ファイルのフォルダパス取得
             string path = Application.ExecutablePath;
             return System.IO.Path.GetDirectoryName(path) + @"\";
         }
 
+        // 期待値データフォルダを検索し、期待値シナリオ一覧を作成する
         private void makeExpectDataBase(string expectDir, string modelName)
         {
             string keyFilePattern = "*.txt";
@@ -79,6 +91,7 @@ namespace IdPairing
             }
         }
 
+        // keyFilePatternにマッチするファイルを検索してリスト化する
         private void searchKeyFile(List<string> keyFileList, string rootDir, string keyFilePattern)
         {
             // keyFilePatternにマッチするファイルを探し、keyFileListに追加
@@ -96,6 +109,7 @@ namespace IdPairing
             }
         }
 
+        // バッチファイルを実行する
         private int callBatch(string batchPath, string param)
         {
             var startInfo = new ProcessStartInfo();
@@ -112,6 +126,7 @@ namespace IdPairing
             return process.ExitCode;
         }
 
+        // 設定ファイル(XML)を読み込む
         private void loadSettings(string settingFilePath)
         {
             System.Xml.Serialization.XmlSerializer serializer = new System.Xml.Serialization.XmlSerializer(typeof(Settings));
@@ -119,12 +134,57 @@ namespace IdPairing
             settings_ = (Settings)serializer.Deserialize(sr);
             sr.Close();
         }
+        // 設定ファイル(XML)に書き出す
         private void saveSettings(string settingFilePath)
         {
             System.Xml.Serialization.XmlSerializer serializer = new System.Xml.Serialization.XmlSerializer(typeof(Settings));
             System.IO.StreamWriter sw = new System.IO.StreamWriter(settingFilePath, false);
             serializer.Serialize(sw, settings_);
             sw.Close();
+        }
+
+        // keyFilePatternにマッチするファイルを検索してlistView1に行追加する
+        private void searchTarget(string rootDir, string keyFilePattern)
+        {
+            // keyFilePatternにマッチするファイルを探し、keyFileListに追加
+            string[] files = System.IO.Directory.GetFiles(rootDir, keyFilePattern);
+            foreach (string file in files)
+            {
+                ScenarioInfo info = new ScenarioInfo();
+                info.id = getIdFromConfFile(file);
+                info.targetPath = Path.GetDirectoryName(file);
+                scenarioInfoDict_[info.id] = info;
+
+                string[] str = { info.id, "", info.targetPath };
+                ListViewItem item = new ListViewItem(str);
+                listView1.Items.Add(item);
+            }
+
+            // サブディレクトリを再帰検索
+            string[] dirs = System.IO.Directory.GetDirectories(rootDir);
+            foreach (string dir in dirs)
+            {
+                searchTarget(dir, keyFilePattern);
+            }
+        }
+
+        // 構成ファイルを読み込みID文字列を取得する
+        private string getIdFromConfFile(string path)
+        {
+            System.IO.StreamReader sr = new StreamReader(path);
+
+            // 1行ずつ読み込む
+            while (sr.Peek() >= 0)
+            {
+                string line = sr.ReadLine();
+                string[] tokens = line.Split(new Char[]{'='}, 2);
+                if (tokens.Length == 2 && tokens[0].Trim() == "idvalue")
+                {
+                    return tokens[1];
+                }
+            }
+
+            return "(unknown)";
         }
 
         //----------------------------------------------------------------------
@@ -169,9 +229,13 @@ namespace IdPairing
             {
                 if (Directory.Exists(f))
                 {
+#if true
+                    searchTarget(f, "config.txt");
+#else
                     string[] str = { System.IO.Path.GetFileName(f), "", f };
                     ListViewItem item = new ListViewItem(str);
                     listView1.Items.Add(item);
+#endif
                 }
             }
         }
@@ -179,6 +243,7 @@ namespace IdPairing
         private void btnClear_Click(object sender, EventArgs e)
         {
             listView1.Items.Clear();
+            scenarioInfoDict_.Clear();
         }
 
         private void btnCall_Click(object sender, EventArgs e)
@@ -191,8 +256,11 @@ namespace IdPairing
                     continue;
                 }
 
+                string id = item.SubItems[0].Text;
+                ScenarioInfo info = scenarioInfoDict_[id];
+
                 string batch = GetModuleDir() + "test.bat";
-                string param = String.Format(@"""{0}"" ""{1}""", item.SubItems[2].Text, item.SubItems[1].Text);
+                string param = String.Format(@"""{0}"" ""{1}"" ""{2}""", id, info.targetPath, info.expectPath);
                 callBatch(batch, param);
             }
         }
@@ -204,14 +272,19 @@ namespace IdPairing
             foreach (ListViewItem item in listView1.Items)
             {
                 string id = item.SubItems[0].Text;
+                ScenarioInfo info = scenarioInfoDict_[id];
 
+                // IDがmodelに存在すればそちらを優先
                 if (modelExpectList_.ContainsKey(id))
                 {
-                    item.SubItems[1].Text = modelExpectList_[id];
+                    info.expectPath = modelExpectList_[id];
+                    item.SubItems[1].Text = info.expectPath.Replace(settings_.expectPath, ".");
                 }
+                // IDがmodelになくてもCommonにあればそちらを採用
                 else if (commonExpectList_.ContainsKey(id))
                 {
-                    item.SubItems[1].Text = commonExpectList_[id];
+                    info.expectPath = commonExpectList_[id];
+                    item.SubItems[1].Text = info.expectPath.Replace(settings_.expectPath, ".");
                 }
             }
         }
